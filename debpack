@@ -1,0 +1,159 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Only output color if stdout is a TTY
+color_echo() {
+    if [[ -t 1 ]]; then
+        printf "\e[$1m==> %s\e[0m\n" "$2"
+    else
+        echo "==> $2"
+    fi
+}
+
+green() {
+    color_echo "1;32" "$1"
+}
+
+yellow() {
+    color_echo "1;33" "$1"
+}
+
+fatal() {
+    color_echo "1;31" "$1"
+    exit 1
+}
+
+# Parses package control file field into $key and $value
+parse_control_field() {
+    key=$(echo "$1" | cut -d: -f1)
+    value=$(echo "$1" | cut -d: -f2- | sed "s/^[[:space:]]*//")
+    if [[ $1 != *:* ]] || [[ -z $key ]] || [[ -z $value ]]; then
+        fatal "Invalid format: $1"
+    fi
+}
+
+patch_control() {
+    parse_control_field "$2"
+    grep -Fiv "${key}:" "$1" > "$1.tmp" || true
+    echo "${key}: ${value}" >> "$1.tmp"
+    mv "$1.tmp" "$1"
+}
+
+# https://www.debian.org/doc/debian-policy/ch-files.html#permissions-and-owners
+normalize_perms() {
+    find "$1" | while IFS= read -r filename; do
+        if [[ -d ${filename} ]] || [[ -x ${filename} ]]; then
+            chmod 0755 "${filename}"
+        elif [[ -f ${filename} ]]; then
+            chmod 0644 "${filename}"
+        else
+            fatal "${filename} is neither a file nor a directory"
+        fi
+    done
+}
+
+build() {
+    # Cleanup
+    if [[ -d .debpack ]]; then
+        rm -r .debpack
+    fi
+
+    green "Copying files"
+    mkdir -p .debpack/DEBIAN/
+    if [[ -d ${src_debian} ]]; then
+        cp -R "${src_debian}/." .debpack/DEBIAN/
+    fi
+
+    # Allow in case all fields are set through args
+    if [[ ! -f .debpack/DEBIAN/control ]]; then
+        yellow "Package control file not found; assuming empty"
+    fi
+
+    # Copy files in Debpackfile
+    # Don't allow empty packages
+    if [[ ! -e ${debpackfile_path} ]]; then
+        fatal "${debpackfile_path} not found"
+    fi
+    while IFS= read -r line || [[ -n ${line} ]]; do
+        # Ignore empty and comment lines
+        if [[ -z ${line} ]] || [[ ${line} == \#* ]]; then
+            continue
+        fi
+        # Make sure we have a tab character
+        if [[ ${line} != *$(printf "\t")* ]]; then
+            fatal "Invalid format: ${line}"
+        fi
+        src=$(echo "${line}" | cut -f1)
+        dst=.debpack$(echo "${line}" | cut -f2)
+        # Create directories up to last slash
+        mkdir -p "${dst%/*}"
+        # Allow source wildcards
+        # shellcheck disable=SC2086
+        cp -R ${src} "${dst}"
+    done < "${debpackfile_path}"
+
+    green "Patching package control file"
+    for field in "$@"; do
+        patch_control .debpack/DEBIAN/control "${field}"
+    done
+
+    green "Normalizing permissions"
+    normalize_perms .debpack
+
+    green "Building package"
+    fakeroot dpkg --build .debpack
+
+    dpkg --info .debpack.deb
+    dpkg --contents .debpack.deb
+    dpkg-name --overwrite .debpack.deb
+
+    green "Done"
+}
+
+print_usage() {
+    cat << EOF
+Usage: debpack [-h] [options] [fields...]
+
+Super simple Debian packages.
+
+Options:
+  -h       Show this message
+  -d PATH  Control files directory (default: debian)
+  -f FILE  Debpackfile path (- for stdin) (default: Debpackfile)
+
+The package control file can be modified at build-time by
+specifying fields in the key:value format. For example:
+
+  debpack Version:1.0 Architecture:i386
+EOF
+}
+
+debpackfile_path=Debpackfile
+src_debian=debian
+
+while getopts ":hf:d:" opt; do
+    case ${opt} in
+        h)
+            print_usage
+            exit
+            ;;
+        f)
+            if [[ ${OPTARG} == - ]]; then
+                debpackfile_path=/dev/stdin
+            else
+                debpackfile_path=${OPTARG}
+            fi
+            ;;
+        d)
+            src_debian=${OPTARG}
+            ;;
+        \?|*)
+            print_usage
+            exit 1
+            ;;
+    esac
+done
+
+# Unprocessed opts are control fields
+shift $(( OPTIND - 1 ))
+build "$@"
