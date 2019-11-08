@@ -2,4 +2,4 @@ Package: nexushello
 Description:: Writes Hello nexus to stdout
 Maintainer: Olivier Clavel <olivier.clavel@spamstinks.com>
 Architecture: all
-Version: 1.0.0
+Version: 1.0.1
