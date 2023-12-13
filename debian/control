@@ -1,5 +1,5 @@
 Package: nexushello
 Description:: Writes "Hello nexus!" to stdout
-Maintainer: Olivier Clavel <olivier.clavel@spamstinks.com>
+Maintainer: Olivier Clavel <olivier.clavel@thoteam.com>
 Architecture: all
-Version: 1.0.3
+Version: 1.0.4-1
