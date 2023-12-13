@@ -101,7 +101,7 @@ build() {
     normalize_perms .debpack
 
     green "Building package"
-    fakeroot dpkg --build .debpack
+    fakeroot dpkg-deb -b -Zgzip -z9 .debpack
 
     dpkg --info .debpack.deb
     dpkg --contents .debpack.deb
